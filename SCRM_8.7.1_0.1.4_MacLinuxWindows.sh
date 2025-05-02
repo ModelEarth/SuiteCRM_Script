@@ -11,13 +11,13 @@ get_input() {
 # Detect platform
 platform="$(uname)"
 case "$platform" in
-  Linux*)
-    echo "Platform detected: Linux"
-    os="linux"
-    ;;
   Darwin*)
     echo "Platform detected: macOS"
     os="macos"
+    ;;
+  Linux*)
+    echo "Platform detected: Linux"
+    os="linux"
     ;;
   CYGWIN*|MINGW*|MSYS*)
     echo "Platform detected: Windows (Git Bash or Cygwin)"
@@ -127,7 +127,7 @@ install_php_PC() {
 }
 
 
-# Configuration for Linux, MacOS and Windows
+# Configuration for MacOS, Linux and Windows
 if [[ "$os" == "macos" ]]; then
     
     echo "Platform detected: macOS - Beginning setup process..."
@@ -1210,5 +1210,4 @@ EOF
     echo "⚠️ Important: If you encounter issues, check Apache and MariaDB logs."
     echo "    - Apache logs: $APACHE_PATH/logs/"
     echo "    - MariaDB logs: Check Windows Event Viewer"
-    
 fi
