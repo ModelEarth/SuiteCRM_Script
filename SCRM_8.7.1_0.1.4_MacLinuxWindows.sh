@@ -128,250 +128,7 @@ install_php_PC() {
 
 
 # Configuration for Linux, MacOS and Windows
-if [[ "$os" == "linux" ]]; then
-
-    echo "Platform detected: Linux - Beginning setup process..."
-    
-    # Check for root privileges
-    if [[ "$EUID" -ne 0 ]]; then
-        echo "❌ This script requires root privileges for Linux installation."
-        echo "Please run with sudo: sudo ./setup.sh"
-        exit 1
-    fi
-    
-    # Update package lists and upgrade existing packages
-    echo "🔄 Updating system packages..."
-    apt update && apt upgrade -y || {
-        echo "❌ Failed to update system packages. Check your internet connection and apt sources."
-        exit 1
-    }
-
-    # Install essential packages first
-    echo "📦 Installing essential packages..."
-    apt install -y unzip wget software-properties-common curl || {
-        echo "❌ Failed to install essential packages."
-        exit 1
-    }
-
-    # Add PHP repository and update
-    echo "📦 Adding PHP repository..."
-    add-apt-repository ppa:ondrej/php -y || {
-        echo "❌ Failed to add PHP repository."
-        exit 1
-    }
-    apt update
-
-    # Install PHP and extensions
-    echo "📦 Installing PHP 8.2 and extensions..."
-    apt install -y php8.2 libapache2-mod-php8.2 php8.2-cli php8.2-curl php8.2-common php8.2-intl \
-        php8.2-gd php8.2-mbstring php8.2-mysqli php8.2-pdo php8.2-mysql php8.2-xml php8.2-zip \
-        php8.2-imap php8.2-ldap php8.2-curl php8.2-soap php8.2-bcmath || {
-        echo "❌ Failed to install PHP and extensions."
-        exit 1
-    }
-
-    # Configure Apache
-    echo "🔧 Configuring Apache Server..."
-    a2enmod rewrite || {
-        echo "⚠️ Failed to enable Apache rewrite module. Check if Apache is installed correctly."
-    }
-    
-    # Create a proper configuration file for disabling directory listing
-    echo "🔧 Disabling directory listing globally..."
-    cat << EOF > /etc/apache2/conf-available/disable-directory-listing.conf
-<Directory /var/www/>
-    Options -Indexes +FollowSymLinks
-    AllowOverride All
-    Require all granted
-</Directory>
-EOF
-    a2enconf disable-directory-listing || {
-        echo "⚠️ Failed to enable directory listing configuration."
-    }
-    
-    # Install and configure MariaDB with error handling
-    echo "📦 Installing MariaDB..."
-    apt install mariadb-server mariadb-client -y || {
-        echo "❌ Failed to install MariaDB."
-        exit 1
-    }
-
-    # Start and enable MariaDB service
-    echo "🔧 Starting MariaDB service..."
-    systemctl start mariadb || {
-        echo "❌ Failed to start MariaDB service."
-        exit 1
-    }
-    systemctl enable mariadb || {
-        echo "⚠️ Failed to enable MariaDB service on startup."
-    }
-
-    echo "⚠️ NOTE: For security reasons, you should run 'mysql_secure_installation' after this script completes."
-
-    # Check if MariaDB is running before database configuration
-    if systemctl is-active --quiet mariadb; then
-        echo "✅ MariaDB is running. Proceeding with database configuration."
-    else
-        echo "❌ MariaDB is not running. Cannot proceed with database configuration."
-        exit 1
-    fi
-
-    # Configure database with error handling and better verification
-    echo "🔧 Configuring main database..."
-    mysql -u root <<EOF
-CREATE DATABASE IF NOT EXISTS CRM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';
-GRANT ALL PRIVILEGES ON CRM.* TO '$db_user'@'localhost';
-FLUSH PRIVILEGES;
-EOF
-
-    # Verify database creation with better error handling
-    if ! mysql -u root -e "USE CRM"; then
-        echo "❌ Failed to create or access database CRM. Please check MySQL root permissions."
-        exit 1
-    else
-        echo "✅ Database CRM created successfully."
-    fi
-
-    # Verify user creation more thoroughly
-    if ! mysql -u root -e "SELECT User FROM mysql.user WHERE User='$db_user';" | grep -q "$db_user"; then
-        echo "❌ Failed to create user $db_user."
-        exit 1
-    else
-        echo "✅ User $db_user created successfully."
-        
-        # Additional verification of user permissions
-        GRANTS=$(mysql -u root -e "SHOW GRANTS FOR '$db_user'@'localhost';" | grep "ON \`CRM\`\." || echo "")
-        if [[ -z "$GRANTS" ]]; then
-            echo "⚠️ Warning: User $db_user may not have proper permissions on CRM database."
-        else
-            echo "✅ User permissions verified."
-        fi
-    fi
-
-    # Create and configure document root for SuiteCRM
-    echo "🔧 Creating document root directories..."
-    mkdir -p /var/www/html/crm
-    
-    # Download SuiteCRM with error handling and cache check
-    echo "📦 Downloading SuiteCRM..."
-    cd /var/www/html/crm
-    if [ ! -f "suitecrm-8-7-1.zip" ]; then
-        wget -O suitecrm-8-7-1.zip https://suitecrm.com/download/148/suite87/564667/suitecrm-8-7-1.zip || {
-            echo "❌ Failed to download SuiteCRM."
-            exit 1
-        }
-    else
-        echo "✅ SuiteCRM archive already exists, using cached version."
-    fi
-    
-    # Extract SuiteCRM with error handling
-    echo "📦 Extracting SuiteCRM..."
-    unzip -o suitecrm-8-7-1.zip || {
-        echo "❌ Failed to extract SuiteCRM."
-        exit 1
-    }
-    echo "✅ SuiteCRM extracted successfully."
-
-    # Configure VirtualHost with proper error handling
-    echo "🔧 Configuring VirtualHost..."
-    cat << EOF > /etc/apache2/sites-available/crm.conf
-<VirtualHost *:80>
-    ServerAdmin webmaster@localhost
-    DocumentRoot /var/www/html/crm/public
-    ServerName $server_ip
-    
-    <Directory /var/www/html/crm/public>
-        Options -Indexes +FollowSymLinks +MultiViews
-        AllowOverride All
-        Require all granted
-    </Directory>
-    
-    ErrorLog \${APACHE_LOG_DIR}/crm-error.log
-    CustomLog \${APACHE_LOG_DIR}/crm-access.log combined
-    
-    # Security headers
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set X-Frame-Options "SAMEORIGIN"
-</VirtualHost>
-EOF
-
-    # Enable the site and SSL module
-    a2ensite crm.conf || {
-        echo "⚠️ Failed to enable CRM virtual host."
-    }
-    a2enmod headers || {
-        echo "⚠️ Failed to enable Apache headers module."
-    }
-
-    # Configure php.ini with better error handling
-    echo "🔧 Setting php.ini configuration..."
-    PHP_INI="/etc/php/8.2/apache2/php.ini"
-    if [ -f "$PHP_INI" ]; then
-        # Backup original php.ini
-        cp "$PHP_INI" "${PHP_INI}.bak"
-        
-        # Update PHP settings
-        sed -i 's/memory_limit = .*/memory_limit = 512M/' "$PHP_INI"
-        sed -i 's/upload_max_filesize = .*/upload_max_filesize = 50M/' "$PHP_INI"
-        sed -i 's/post_max_size = .*/post_max_size = 50M/' "$PHP_INI"
-        sed -i 's/max_execution_time = .*/max_execution_time = 300/' "$PHP_INI"
-        # Add additional security settings
-        sed -i 's/display_errors = .*/display_errors = Off/' "$PHP_INI"
-        sed -i 's/expose_php = .*/expose_php = Off/' "$PHP_INI"
-        
-        echo "✅ PHP configuration updated."
-    else
-        echo "⚠️ PHP configuration file not found at $PHP_INI"
-    fi
-
-    # Adjust permissions with better security practices
-    echo "🔧 Setting proper permissions..."
-    chown -R www-data:www-data /var/www/html/crm
-    find /var/www/html/crm -type d -exec chmod 750 {} \;
-    find /var/www/html/crm -type f -exec chmod 640 {} \;
-    # Make sure executable files remain executable
-    if [ -f "/var/www/html/crm/bin/console" ]; then
-        chmod +x /var/www/html/crm/bin/console
-    fi
-    # Make storage directories writable
-    if [ -d "/var/www/html/crm/storage" ]; then
-        chmod -R 770 /var/www/html/crm/storage
-    fi
-    if [ -d "/var/www/html/crm/cache" ]; then
-        chmod -R 770 /var/www/html/crm/cache
-    fi
-    echo "✅ Permissions configured."
-
-    # Restart Apache to apply changes
-    echo "🔄 Restarting Apache..."
-    systemctl restart apache2 || {
-        echo "⚠️ Failed to restart Apache. Please check Apache configuration."
-    }
-    
-    # Set up a firewall if UFW is available
-    if command -v ufw &> /dev/null; then
-        echo "🔧 Configuring firewall..."
-        ufw allow 80/tcp
-        ufw allow 443/tcp
-        echo "✅ Firewall configured to allow HTTP and HTTPS traffic."
-    fi
-    
-    # Create a simple health check
-    echo "<?php echo 'CRM Health Check: ' . date('Y-m-d H:i:s'); ?>" > /var/www/html/crm/public/health.php
-    chmod 644 /var/www/html/crm/public/health.php
-    
-    echo "✅ Linux setup completed successfully."
-    echo "📝 You can now complete the installation of your CRM from the web browser using: http://$server_ip"
-    echo "👉 Health check URL: http://$server_ip/health.php"
-    echo "⚠️ SECURITY REMINDER: Run 'sudo mysql_secure_installation' to secure your MariaDB installation."
-    echo "📋 Configuration summary:"
-    echo "  - Database: CRM"
-    echo "  - Database User: $db_user"
-    echo "  - Document Root: /var/www/html/crm"
-
-elif [[ "$os" == "macos" ]]; then
+if [[ "$os" == "macos" ]]; then
     
     echo "Platform detected: macOS - Beginning setup process..."
     
@@ -405,7 +162,7 @@ elif [[ "$os" == "macos" ]]; then
       echo "✅ Homebrew is already installed."
     fi
 
-    # Create a function to install packages with better error handling
+    # Function for installing packages
     install_package() {
       local package=$1
       echo "📦 Installing $package..."
@@ -599,7 +356,7 @@ EOF
         echo "⚠️ Failed to set ownership on CRM directory."
     }
     
-    # Set directory and file permissions with better security
+    # Set directory and file permissions
     find "$CRM_ROOT" -type d -exec chmod 750 {} \; || {
         echo "⚠️ Failed to set directory permissions."
     }
@@ -786,6 +543,250 @@ EOF
     fi
 
 
+elif [[ "$os" == "linux" ]]; then
+
+    echo "Platform detected: Linux - Beginning setup process..."
+    
+    # Check for root privileges
+    if [[ "$EUID" -ne 0 ]]; then
+        echo "❌ This script requires root privileges for Linux installation."
+        echo "Please run with sudo: sudo ./setup.sh"
+        exit 1
+    fi
+    
+    # Update package lists and upgrade existing packages
+    echo "🔄 Updating system packages..."
+    apt update && apt upgrade -y || {
+        echo "❌ Failed to update system packages. Check your internet connection and apt sources."
+        exit 1
+    }
+
+    # Install essential packages first
+    echo "📦 Installing essential packages..."
+    apt install -y unzip wget software-properties-common curl || {
+        echo "❌ Failed to install essential packages."
+        exit 1
+    }
+
+    # Add PHP repository and update
+    echo "📦 Adding PHP repository..."
+    add-apt-repository ppa:ondrej/php -y || {
+        echo "❌ Failed to add PHP repository."
+        exit 1
+    }
+    apt update
+
+    # Install PHP and extensions
+    echo "📦 Installing PHP 8.2 and extensions..."
+    apt install -y php8.2 libapache2-mod-php8.2 php8.2-cli php8.2-curl php8.2-common php8.2-intl \
+        php8.2-gd php8.2-mbstring php8.2-mysqli php8.2-pdo php8.2-mysql php8.2-xml php8.2-zip \
+        php8.2-imap php8.2-ldap php8.2-curl php8.2-soap php8.2-bcmath || {
+        echo "❌ Failed to install PHP and extensions."
+        exit 1
+    }
+
+    # Configure Apache
+    echo "🔧 Configuring Apache Server..."
+    a2enmod rewrite || {
+        echo "⚠️ Failed to enable Apache rewrite module. Check if Apache is installed correctly."
+    }
+    
+    # Create a proper configuration file for disabling directory listing
+    echo "🔧 Disabling directory listing globally..."
+    cat << EOF > /etc/apache2/conf-available/disable-directory-listing.conf
+<Directory /var/www/>
+    Options -Indexes +FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+EOF
+    a2enconf disable-directory-listing || {
+        echo "⚠️ Failed to enable directory listing configuration."
+    }
+    
+    # Install and configure MariaDB with error handling
+    echo "📦 Installing MariaDB..."
+    apt install mariadb-server mariadb-client -y || {
+        echo "❌ Failed to install MariaDB."
+        exit 1
+    }
+
+    # Start and enable MariaDB service
+    echo "🔧 Starting MariaDB service..."
+    systemctl start mariadb || {
+        echo "❌ Failed to start MariaDB service."
+        exit 1
+    }
+    systemctl enable mariadb || {
+        echo "⚠️ Failed to enable MariaDB service on startup."
+    }
+
+    echo "⚠️ NOTE: For security reasons, you should run 'mysql_secure_installation' after this script completes."
+
+    # Check if MariaDB is running before database configuration
+    if systemctl is-active --quiet mariadb; then
+        echo "✅ MariaDB is running. Proceeding with database configuration."
+    else
+        echo "❌ MariaDB is not running. Cannot proceed with database configuration."
+        exit 1
+    fi
+
+    # Configure database with error handling and verification
+    echo "🔧 Configuring main database..."
+    mysql -u root <<EOF
+CREATE DATABASE IF NOT EXISTS CRM CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$db_user'@'localhost' IDENTIFIED BY '$db_pass';
+GRANT ALL PRIVILEGES ON CRM.* TO '$db_user'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+    # Verify database creation with better error handling
+    if ! mysql -u root -e "USE CRM"; then
+        echo "❌ Failed to create or access database CRM. Please check MySQL root permissions."
+        exit 1
+    else
+        echo "✅ Database CRM created successfully."
+    fi
+
+    # Verify user creation more thoroughly
+    if ! mysql -u root -e "SELECT User FROM mysql.user WHERE User='$db_user';" | grep -q "$db_user"; then
+        echo "❌ Failed to create user $db_user."
+        exit 1
+    else
+        echo "✅ User $db_user created successfully."
+        
+        # Additional verification of user permissions
+        GRANTS=$(mysql -u root -e "SHOW GRANTS FOR '$db_user'@'localhost';" | grep "ON \`CRM\`\." || echo "")
+        if [[ -z "$GRANTS" ]]; then
+            echo "⚠️ Warning: User $db_user may not have proper permissions on CRM database."
+        else
+            echo "✅ User permissions verified."
+        fi
+    fi
+
+    # Create and configure document root for SuiteCRM
+    echo "🔧 Creating document root directories..."
+    mkdir -p /var/www/html/crm
+    
+    # Download SuiteCRM with error handling and cache check
+    echo "📦 Downloading SuiteCRM..."
+    cd /var/www/html/crm
+    if [ ! -f "suitecrm-8-7-1.zip" ]; then
+        wget -O suitecrm-8-7-1.zip https://suitecrm.com/download/148/suite87/564667/suitecrm-8-7-1.zip || {
+            echo "❌ Failed to download SuiteCRM."
+            exit 1
+        }
+    else
+        echo "✅ SuiteCRM archive already exists, using cached version."
+    fi
+    
+    # Extract SuiteCRM with error handling
+    echo "📦 Extracting SuiteCRM..."
+    unzip -o suitecrm-8-7-1.zip || {
+        echo "❌ Failed to extract SuiteCRM."
+        exit 1
+    }
+    echo "✅ SuiteCRM extracted successfully."
+
+    # Configure VirtualHost with proper error handling
+    echo "🔧 Configuring VirtualHost..."
+    cat << EOF > /etc/apache2/sites-available/crm.conf
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html/crm/public
+    ServerName $server_ip
+    
+    <Directory /var/www/html/crm/public>
+        Options -Indexes +FollowSymLinks +MultiViews
+        AllowOverride All
+        Require all granted
+    </Directory>
+    
+    ErrorLog \${APACHE_LOG_DIR}/crm-error.log
+    CustomLog \${APACHE_LOG_DIR}/crm-access.log combined
+    
+    # Security headers
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set X-Frame-Options "SAMEORIGIN"
+</VirtualHost>
+EOF
+
+    # Enable the site and SSL module
+    a2ensite crm.conf || {
+        echo "⚠️ Failed to enable CRM virtual host."
+    }
+    a2enmod headers || {
+        echo "⚠️ Failed to enable Apache headers module."
+    }
+
+    # Configure php.ini
+    echo "🔧 Setting php.ini configuration..."
+    PHP_INI="/etc/php/8.2/apache2/php.ini"
+    if [ -f "$PHP_INI" ]; then
+        # Backup original php.ini
+        cp "$PHP_INI" "${PHP_INI}.bak"
+        
+        # Update PHP settings
+        sed -i 's/memory_limit = .*/memory_limit = 512M/' "$PHP_INI"
+        sed -i 's/upload_max_filesize = .*/upload_max_filesize = 50M/' "$PHP_INI"
+        sed -i 's/post_max_size = .*/post_max_size = 50M/' "$PHP_INI"
+        sed -i 's/max_execution_time = .*/max_execution_time = 300/' "$PHP_INI"
+        # Add additional security settings
+        sed -i 's/display_errors = .*/display_errors = Off/' "$PHP_INI"
+        sed -i 's/expose_php = .*/expose_php = Off/' "$PHP_INI"
+        
+        echo "✅ PHP configuration updated."
+    else
+        echo "⚠️ PHP configuration file not found at $PHP_INI"
+    fi
+
+    # Adjust permissions with optimal security
+    echo "🔧 Setting proper permissions..."
+    chown -R www-data:www-data /var/www/html/crm
+    find /var/www/html/crm -type d -exec chmod 750 {} \;
+    find /var/www/html/crm -type f -exec chmod 640 {} \;
+    # Make sure executable files remain executable
+    if [ -f "/var/www/html/crm/bin/console" ]; then
+        chmod +x /var/www/html/crm/bin/console
+    fi
+    # Make storage directories writable
+    if [ -d "/var/www/html/crm/storage" ]; then
+        chmod -R 770 /var/www/html/crm/storage
+    fi
+    if [ -d "/var/www/html/crm/cache" ]; then
+        chmod -R 770 /var/www/html/crm/cache
+    fi
+    echo "✅ Permissions configured."
+
+    # Restart Apache to apply changes
+    echo "🔄 Restarting Apache..."
+    systemctl restart apache2 || {
+        echo "⚠️ Failed to restart Apache. Please check Apache configuration."
+    }
+    
+    # Set up a firewall if UFW is available
+    if command -v ufw &> /dev/null; then
+        echo "🔧 Configuring firewall..."
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        echo "✅ Firewall configured to allow HTTP and HTTPS traffic."
+    fi
+    
+    # Create a simple health check
+    echo "<?php echo 'CRM Health Check: ' . date('Y-m-d H:i:s'); ?>" > /var/www/html/crm/public/health.php
+    chmod 644 /var/www/html/crm/public/health.php
+    
+    echo "✅ Linux setup completed successfully."
+    echo "📝 You can now complete the installation of your CRM from the web browser using: http://$server_ip"
+    echo "👉 Health check URL: http://$server_ip/health.php"
+    echo "⚠️ SECURITY REMINDER: Run 'sudo mysql_secure_installation' to secure your MariaDB installation."
+    echo "📋 Configuration summary:"
+    echo "  - Database: CRM"
+    echo "  - Database User: $db_user"
+    echo "  - Document Root: /var/www/html/crm"
+
+
 elif [[ "$os" == "windows" ]]; then
 
     echo "Platform detected: Windows (Git Bash or Cygwin) - Beginning setup process..."
@@ -854,7 +855,7 @@ elif [[ "$os" == "windows" ]]; then
         echo "✅ PHP $PHP_VERSION installed successfully."
     fi
 
-    # Configure PHP for Apache with better error handling
+    # Configure PHP for Apache
     echo "🔧 Configuring PHP with Apache..."
     if [ -f "$APACHE_CONF" ]; then
         # Create backup of Apache config
@@ -1108,7 +1109,7 @@ EOF
     fi
 
 
-    # Set permissions with better Windows compatibility
+    # Set permissions with Windows compatibility
     echo "🔧 Setting permissions..."
     if command -v icacls &>/dev/null; then
         # Grant appropriate permissions to the Apache user
@@ -1144,7 +1145,7 @@ EOF
         echo "⚠️ Failed to create health check file."
     }
     
-    # Restart Apache service with better error handling
+    # Restart Apache service
     echo "🔄 Restarting Apache..."
     if command -v httpd &>/dev/null; then
         # Check if Apache is already running
