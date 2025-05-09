@@ -58,8 +58,32 @@ get_internal_ip() {
 }
 
 # Request user information
-db_user=$(get_input "Enter your MariaDB username")
-db_pass=$(get_input "Enter your MariaDB password")
+echo ""
+echo "Choose where to set up your SuiteCRM database:"
+echo "1 - Azure (remotely)"
+echo "2 - MariaDB (locally)"
+read -p "Enter your choice [1/2]: " db_choice
+
+if [[ "$db_choice" == "1" ]]; then
+    echo "🧭 Azure setup selected."
+
+    # Prompt for Azure DB inputs, place holder
+    read -p "Enter Azure MySQL host (e.g., your-db.mysql.database.azure.com): " azure_host
+    read -p "Enter Azure DB name: " azure_db
+    read -p "Enter Azure DB username (e.g., suitecrm_user@your-db): " azure_user
+    read -sp "Enter Azure DB password: " azure_pass
+    echo ""
+
+    echo "🔧 Azure setup is currently under development."
+    echo "➡️ Please manually run the Azure SQL script or configure DB access in SuiteCRM installer."
+    exit 0
+fi
+
+# If not Azure, proceed with local MariaDB as usual
+read -p "Enter your MariaDB username: " db_user
+read -sp "Enter your MariaDB password: " db_pass
+echo ""
+
 
 # Automatically get the internal IP
 server_ip=$(get_internal_ip)
