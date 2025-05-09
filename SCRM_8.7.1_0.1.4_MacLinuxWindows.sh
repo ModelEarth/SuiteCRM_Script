@@ -6,6 +6,14 @@ get_input() {
     echo $value
 }
 
+# Safe wrapper for Homebrew commands — skips if running as root
+brew_safe() {
+  if [[ "$EUID" -eq 0 ]]; then
+    echo "⚠️ Skipping: brew $* (Homebrew cannot run as root)"
+  else
+    brew "$@"
+  fi
+}
 #!/bin/bash
 
 # Detect platform
@@ -59,9 +67,9 @@ echo "IP retrieved: $server_ip"
 
 # Function to install a package if not already installed
 install_if_missing() {
-  if ! brew list "$1" &>/dev/null; then
+  if ! brew_safe list "$1" &>/dev/null; then
     echo "📦 Installing $1..."
-    brew install "$1"
+    brew_safe install "$1"
   else
     echo "✅ $1 is already installed."
   fi
@@ -70,7 +78,12 @@ install_if_missing() {
 install_php_macos() {
     # Install PHP 8.2 and common extensions
     echo "📦 Installing PHP 8.2 and extensions..."
-    brew install php@8.2
+    if [[ "$EUID" -eq 0 ]]; then
+        echo "❌ Cannot install PHP as root via Homebrew."
+        echo "➡️ Please re-run this script as a normal user to install PHP."
+        exit 1
+    fi
+    brew_safe install php@8.2
 
     # Add PHP 8.2 to PATH if not already in it
     PHP82_PATH="/opt/homebrew/opt/php@8.2/bin"
@@ -87,13 +100,13 @@ install_php_macos() {
     fi
 
     # Link PHP 8.2 as the default
-    brew link --overwrite --force php@8.2
+    brew_safe link --overwrite --force php@8.2
 
     # Common PHP extensions (included or installable via PECL)
     echo "📦 Installing PECL and common PHP extensions..."
 
     # Install PECL and common PHP extensions
-    brew install autoconf pkg-config
+    brew_safe install autoconf pkg-config
     pecl install imagick || true
     pecl install ldap || true
     pecl install imap || true
@@ -102,7 +115,13 @@ install_php_macos() {
 
     echo "✅ PHP 8.2 and common extensions are installed."
     # Show installed PHP version
-    php -v
+    if ! command -v php > /dev/null; then
+        echo "❌ PHP is still not installed. Aborting."
+        echo "➡️ Please run the script without sudo so Homebrew can install PHP."
+        exit 1
+    else
+        php -v
+    fi
 }
 install_php_PC() {
     echo "📦 Installing PHP 8.2 for Windows (Git Bash or Cygwin)..."
@@ -132,12 +151,12 @@ if [[ "$os" == "macos" ]]; then
     
     echo "Platform detected: macOS - Beginning setup process..."
     
-    # Prevent running as root
-    if [[ "$EUID" -eq 0 ]]; then
-      echo "❌ Do not run this script as root or with sudo on macOS."
-      echo "The script will prompt for password when needed using 'sudo'."
-      exit 1
-    fi
+    # Removed sudo/root check to allow macOS install with sudo if needed
+    #if [[ "$EUID" -eq 0 ]]; then
+      #echo "❌ Do not run this script as root or with sudo on macOS."
+      #echo "The script will prompt for password when needed using 'sudo'."
+      #exit 1
+    #fi
 
     # Check for Homebrew installation
     echo "🔍 Checking for Homebrew..."
@@ -166,8 +185,8 @@ if [[ "$os" == "macos" ]]; then
     install_package() {
       local package=$1
       echo "📦 Installing $package..."
-      if ! brew list "$package" &>/dev/null; then
-        brew install "$package" || {
+      if ! brew_safe list "$package" &>/dev/null; then
+        brew_safe install "$package" || {
           echo "❌ Failed to install $package."
           return 1
         }
@@ -180,7 +199,7 @@ if [[ "$os" == "macos" ]]; then
 
     # Update and upgrade Homebrew
     echo "🔄 Updating Homebrew and packages..."
-    brew update && brew upgrade || {
+    brew_safe update && brew_safe upgrade || {
       echo "⚠️ Warning: Failed to update Homebrew. Continuing anyway..."
     }
 
@@ -226,9 +245,9 @@ if [[ "$os" == "macos" ]]; then
 
     # Start Apache service with error handling
     echo "🔧 Starting Apache service..."
-    brew services start httpd || {
+    brew_safe services start httpd || {
       echo "⚠️ Failed to start Apache service. Attempting to restart..."
-      brew services restart httpd || {
+      brew_safe services restart httpd || {
         echo "❌ Failed to start Apache. Please check the Apache configuration."
         exit 1
       }
@@ -460,8 +479,8 @@ EOF
     
     # Restart services
     echo "🔄 Restarting services..."
-    brew services restart httpd || echo "⚠️ Failed to restart Apache"
-    brew services restart mariadb || echo "⚠️ Failed to restart MariaDB"
+    brew_safe services restart httpd || echo "⚠️ Failed to restart Apache"
+    brew_safe services restart mariadb || echo "⚠️ Failed to restart MariaDB"
     
     # Create a simple health check
     echo "<?php echo 'CRM Health Check: ' . date('Y-m-d H:i:s'); ?>" > "$CRM_ROOT/public/health.php"
@@ -486,9 +505,9 @@ EOF
 
     # Start MariaDB service with error handling
     echo "🔧 Starting MariaDB service..."
-    brew services start mariadb || {
+    brew_safe services start mariadb || {
       echo "⚠️ Failed to start MariaDB service. Attempting to restart..."
-      brew services restart mariadb || {
+      brew_safe services restart mariadb || {
         echo "❌ Failed to start MariaDB. Please check for errors."
         exit 1
       }
