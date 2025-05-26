@@ -6,16 +6,6 @@ get_input() {
     echo $value
 }
 
-# Safe wrapper for Homebrew commands — skips if running as root
-brew_safe() {
-  if [[ "$EUID" -eq 0 ]]; then
-    echo "⚠️ Skipping: brew $* (Homebrew cannot run as root)"
-  else
-    brew "$@"
-  fi
-}
-#!/bin/bash
-
 # Detect platform
 platform="$(uname)"
 case "$platform" in
@@ -37,7 +27,6 @@ case "$platform" in
     ;;
 esac
 
-
 # Function to automatically get the internal IP
 get_internal_ip() {
   if command -v ip > /dev/null; then
@@ -54,6 +43,15 @@ get_internal_ip() {
   else
     echo "Unsupported OS" >&2
     return 1
+  fi
+}
+
+# Safe wrapper for Homebrew commands — skips if running as root
+brew_safe() {
+  if [[ "$EUID" -eq 0 ]]; then
+    echo "⚠️ Skipping: brew $* (Homebrew cannot run as root)"
+  else
+    brew "$@"
   fi
 }
 
@@ -528,15 +526,16 @@ EOF
     install_package mariadb || exit 1
 
     # Start MariaDB service with error handling
-    echo "🔧 Starting MariaDB service..."
-    brew_safe services start mariadb || {
-      echo "⚠️ Failed to start MariaDB service. Attempting to restart..."
-      brew_safe services restart mariadb || {
-        echo "❌ Failed to start MariaDB. Please check for errors."
-        exit 1
-      }
-    }
-
+    if ! pgrep -f "mysql" > /dev/null; then # If not running already
+        echo "🔧 Starting MariaDB service..."
+        brew_safe services start mariadb || {
+          echo "⚠️ Failed to start MariaDB service. Attempting to restart..."
+          brew_safe services restart mariadb || {
+            echo "❌ Failed to start MariaDB. Please check for errors."
+            exit 1
+          }
+        }
+    fi
     # Check if MariaDB is running
     if ! pgrep -f "mysql" > /dev/null; then
         echo "❌ MariaDB is not running. Cannot continue with database setup."
